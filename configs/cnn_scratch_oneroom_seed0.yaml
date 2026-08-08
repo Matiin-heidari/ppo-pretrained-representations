@@ -12,6 +12,14 @@ encoder_kwargs:
 total_timesteps: 500000
 checkpoint_steps: [100000, 250000, 500000]
 
+dormant_ratio:
+  enabled: true
+  log_freq: 10000        # env steps between measurements
+  n_reference_obs: 512
+  reference_seed: 12345  # fixed across ALL runs on purpose -- do not tie to `seed`
+  batch_size: 64
+  taus: [0.0, 0.025, 0.1]
+
 learning_rate: 0.0003
 n_steps: 256          # per-env rollout length before each PPO update
 batch_size: 256

@@ -22,8 +22,11 @@ Implemented and validated:
   experiment grid. Core comparison is CNN vs. ResNet18 (frozen and fine-tuned); DINOv2 (frozen) is
   run as a slower secondary comparison — see [Known issues](#known-issues).
 
+- Dormant-neuron-ratio tracking for the encoder and the PPO heads, measured on a fixed reference
+  batch of observations shared by every run. On by default; logged to TensorBoard under
+  `dormant/` and to `results/dormant/<run_name>.jsonl` for later aggregation.
+
 Not yet implemented:
-- Dormant-neuron-ratio tracking (diagnostic metric).
 - Generalization train/test split and evaluation harness.
 - The full multi-seed run grid and result aggregation/plots.
 
@@ -71,9 +74,11 @@ src/
   encoders/          # CNN, ResNet18, DINOv2 feature extractors (shared BaseFeaturesExtractor interface)
   envs/               # vectorized MiniWorld env factory
   train.py             # PPO training entrypoint
+  dormant_ratio.py     # dormant-neuron tracking (hooks, fixed reference batch, SB3 callback)
   smoke_test_render.py # standalone MiniWorld rendering check
 configs/              # one YAML per run; files prefixed `_smoke_` are throwaway benchmark/debug configs
-results/               # checkpoints + TensorBoard logs (gitignored)
+tests/                # unit tests (`python -m tests.test_dormant_ratio`)
+results/               # checkpoints + TensorBoard logs + dormant-ratio JSONL (gitignored)
 ```
 
 ## Known issues

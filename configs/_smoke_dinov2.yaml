@@ -17,3 +17,7 @@ n_steps: 256
 batch_size: 256
 n_epochs: 10
 gamma: 0.99
+
+# off so the pilot measures pure training throughput
+dormant_ratio:
+  enabled: false
