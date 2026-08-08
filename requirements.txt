@@ -1,0 +1,10 @@
+torch==2.13.0+cu130
+torchvision==0.28.0+cu130
+gymnasium==1.3.0
+miniworld==2.1.0
+stable_baselines3==2.9.0
+tensorboard==2.21.0
+matplotlib==3.11.1
+pandas==3.0.5
+pillow==12.2.0
+PyYAML==6.0.3
