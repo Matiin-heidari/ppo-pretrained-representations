@@ -6,10 +6,20 @@ import yaml
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback
 
+from src.dormant_ratio import (
+    DEFAULT_TAUS,
+    DormantRatioCallback,
+    collect_reference_observations,
+)
 from src.encoders import ENCODER_REGISTRY
 from src.envs.make_env import build_vec_env
 
 RESULTS_DIR = "results"
+
+# The reference batch for dormant-ratio tracking is deliberately independent of the run seed:
+# every encoder and every seed is measured on the identical observations, which is what makes
+# the ratios comparable across runs. Don't tie this to cfg["seed"].
+DEFAULT_REFERENCE_SEED = 12345
 
 
 class MilestoneCheckpointCallback(BaseCallback):
@@ -61,6 +71,18 @@ def train(cfg: dict):
     os.makedirs(checkpoint_dir, exist_ok=True)
     os.makedirs(tensorboard_dir, exist_ok=True)
 
+    # Collected before the training env exists so only one MiniWorld GL context is alive at a
+    # time -- MiniWorld's renderer is the fragile part of this pipeline.
+    dormant_cfg = cfg.get("dormant_ratio") or {}
+    dormant_enabled = dormant_cfg.get("enabled", True)
+    reference_obs = None
+    if dormant_enabled:
+        reference_obs = collect_reference_observations(
+            env_id=cfg["env_id"],
+            n_obs=dormant_cfg.get("n_reference_obs", 512),
+            seed=dormant_cfg.get("reference_seed", DEFAULT_REFERENCE_SEED),
+        )
+
     env = build_vec_env(
         env_id=cfg["env_id"],
         n_envs=cfg["n_envs"],
@@ -93,12 +115,23 @@ def train(cfg: dict):
         verbose=1,
     )
 
-    callback = MilestoneCheckpointCallback(cfg["checkpoint_steps"], checkpoint_dir, verbose=1)
+    callbacks = [MilestoneCheckpointCallback(cfg["checkpoint_steps"], checkpoint_dir, verbose=1)]
+    if dormant_enabled:
+        callbacks.append(
+            DormantRatioCallback(
+                reference_obs=reference_obs,
+                log_freq=dormant_cfg.get("log_freq", 10000),
+                batch_size=dormant_cfg.get("batch_size", 64),
+                taus=dormant_cfg.get("taus", list(DEFAULT_TAUS)),
+                jsonl_path=os.path.join(RESULTS_DIR, "dormant", f"{run_name}.jsonl"),
+                verbose=1,
+            )
+        )
 
     start = time.time()
     model.learn(
         total_timesteps=cfg["total_timesteps"],
-        callback=callback,
+        callback=callbacks,
         tb_log_name=run_name,
     )
     elapsed = time.time() - start
