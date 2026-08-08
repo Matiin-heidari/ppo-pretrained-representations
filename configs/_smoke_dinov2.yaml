@@ -1,0 +1,19 @@
+run_name: _smoke_dinov2
+
+env_id: MiniWorld-OneRoom-v0
+seed: 0
+n_envs: 4
+use_subproc: false
+
+encoder: dinov2
+encoder_kwargs:
+  trainable: false
+
+total_timesteps: 8192
+checkpoint_steps: [2048, 4096, 8192]
+
+learning_rate: 0.0003
+n_steps: 256
+batch_size: 256
+n_epochs: 10
+gamma: 0.99

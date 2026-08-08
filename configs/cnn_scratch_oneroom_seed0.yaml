@@ -1,0 +1,19 @@
+run_name: cnn_scratch_oneroom_seed0
+
+env_id: MiniWorld-OneRoom-v0
+seed: 0
+n_envs: 4
+use_subproc: false   # flip to true once SubprocVecEnv is confirmed working on this machine
+
+encoder: cnn
+encoder_kwargs:
+  features_dim: 512
+
+total_timesteps: 500000
+checkpoint_steps: [100000, 250000, 500000]
+
+learning_rate: 0.0003
+n_steps: 256          # per-env rollout length before each PPO update
+batch_size: 256
+n_epochs: 10
+gamma: 0.99
