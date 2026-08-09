@@ -67,6 +67,8 @@ instead of `features_dim`, which is fixed by the pretrained architecture.
 
 Checkpoints and TensorBoard logs are written under `results/`.
 
+View tensorboard logs with `tensorboard --logdir results/tensorboard`
+
 ## Repo structure
 
 ```
