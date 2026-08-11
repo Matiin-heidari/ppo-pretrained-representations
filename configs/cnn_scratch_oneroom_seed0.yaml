@@ -20,6 +20,11 @@ dormant_ratio:
   batch_size: 64
   taus: [0.0, 0.025, 0.1]
 
+# Trains on the lower half of MiniWorld's appearance-randomization ranges; evaluate on the
+# held-out upper half with `python -m src.eval_generalization <this config> --checkpoint-step N`.
+generalization:
+  enabled: true
+
 learning_rate: 0.0003
 n_steps: 256          # per-env rollout length before each PPO update
 batch_size: 256

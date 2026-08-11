@@ -21,3 +21,6 @@ gamma: 0.99
 # off so the pilot measures pure training throughput
 dormant_ratio:
   enabled: false
+
+generalization:
+  enabled: false

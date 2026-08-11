@@ -1,13 +1,13 @@
-run_name: _smoke_cnn
+run_name: _smoke_resnet18_finetune
 
 env_id: MiniWorld-OneRoom-v0
 seed: 0
 n_envs: 4
 use_subproc: false
 
-encoder: cnn
+encoder: resnet18
 encoder_kwargs:
-  features_dim: 512
+  trainable: true
 
 total_timesteps: 4096
 checkpoint_steps: [2048, 4096]
@@ -21,5 +21,6 @@ gamma: 0.99
 # off so the pilot measures pure training throughput
 dormant_ratio:
   enabled: false
+
 generalization:
   enabled: false

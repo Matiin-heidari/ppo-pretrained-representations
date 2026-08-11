@@ -26,3 +26,6 @@ dormant_ratio:
   reference_seed: 12345
   batch_size: 64
   taus: [0.0, 0.025, 0.1]
+
+generalization:
+  enabled: false
