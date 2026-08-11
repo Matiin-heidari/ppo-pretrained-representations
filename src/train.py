@@ -12,6 +12,7 @@ from src.dormant_ratio import (
     collect_reference_observations,
 )
 from src.encoders import ENCODER_REGISTRY
+from src.envs.generalization import TRAIN_PARAMS
 from src.envs.make_env import build_vec_env
 
 RESULTS_DIR = "results"
@@ -55,14 +56,20 @@ def load_config(config_path: str) -> dict:
 
 
 def train(cfg: dict):
-    if cfg["encoder"] == "dinov2":
-        # Reproduced on this machine: DINOv2's forward races against the trainable heads'
-        # backward kernels on the default CUDA stream and occasionally corrupts a slice of
-        # the output batch with NaN (only reproduces in the live training loop, never on
-        # offline replay of the identical input -- and persists across both cu126 and cu130
-        # torch builds, so it isn't a single-toolkit regression). CUDA_LAUNCH_BLOCKING=1
-        # serializes kernel launches and reliably eliminates it (validated over 8192 steps),
-        # at a real cost (~5x slower). Scoped to DINOv2 runs only so CNN/ResNet18 stay fast.
+    is_finetuning = cfg.get("encoder_kwargs", {}).get("trainable", False)
+    if cfg["encoder"] == "dinov2" or is_finetuning:
+        # Reproduced on this machine: async CUDA kernels from a large pretrained backbone (its
+        # own forward, or its backward when fine-tuned) race against the trainable heads' kernels
+        # on the default stream. For frozen DINOv2 this silently corrupts a slice of the output
+        # batch with NaN; for fine-tuned ResNet18 it crashed with `cudaErrorIllegalInstruction`.
+        # Neither reproduces offline (identical inputs replayed outside the training loop are
+        # fine) or is fixed by disabling TF32/cudnn.benchmark, and persists across cu126 and
+        # cu130 torch builds -- this looks like a real driver/toolkit stability issue on this
+        # machine, not a single buggy kernel. CUDA_LAUNCH_BLOCKING=1 serializes kernel launches
+        # and reliably eliminates it (validated: DINOv2 over 8192 steps, ResNet18-finetune over
+        # 4096 steps, zero failures), at a real cost (roughly 4-40x slower depending on how much
+        # of the step is the large backbone). Plain CNN and *frozen* ResNet18/DINOv2-adjacent
+        # small ops never hit this, so it's scoped to only the runs that need it.
         os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 
     run_name = cfg["run_name"]
@@ -83,11 +90,18 @@ def train(cfg: dict):
             seed=dormant_cfg.get("reference_seed", DEFAULT_REFERENCE_SEED),
         )
 
+    # Trains on the lower half of MiniWorld's appearance-randomization ranges (see
+    # src/envs/generalization.py); src/eval_generalization.py checks the held-out upper half
+    # for H3. Without this, training sees a single fixed appearance and there is nothing to
+    # generalize *from*.
+    generalization_enabled = cfg.get("generalization", {}).get("enabled", True)
     env = build_vec_env(
         env_id=cfg["env_id"],
         n_envs=cfg["n_envs"],
         seed=cfg["seed"],
         use_subproc=cfg.get("use_subproc", False),
+        domain_rand=generalization_enabled,
+        params=TRAIN_PARAMS if generalization_enabled else None,
     )
 
     encoder_cls = ENCODER_REGISTRY[cfg["encoder"]]
