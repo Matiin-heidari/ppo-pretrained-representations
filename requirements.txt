@@ -1,5 +1,17 @@
-torch==2.13.0+cu130
-torchvision==0.28.0+cu130
+# Install order matters: torch/torchvision need the CUDA wheel index (adjust cu-tag to
+# match the GPU driver at install time), then the rest can install normally:
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu132
+#   pip install -r requirements.txt
+#
+# cu132 chosen deliberately over cu130: CUDA 13.0-13.1 has a confirmed compiler bug producing
+# illegal instructions (matches the cudaErrorIllegalInstruction crash we hit fine-tuning
+# ResNet18), fixed in 13.1+; CUDA 13.2 also fixes an unrelated CUDA 12.8 compiler bug. See
+# temp/PROJECT_PLAN.md for the investigation.
+#
+# These are the packages we import directly; pip resolves the rest (numpy, pyglet, etc.)
+# as transitive dependencies.
+torch==2.12.1+cu132
+torchvision==0.27.1+cu132
 gymnasium==1.3.0
 miniworld==2.1.0
 stable_baselines3==2.9.0
