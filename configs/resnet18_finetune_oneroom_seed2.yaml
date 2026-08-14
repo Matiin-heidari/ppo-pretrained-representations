@@ -1,0 +1,32 @@
+run_name: resnet18_finetune_oneroom_seed2
+
+env_id: MiniWorld-OneRoom-v0
+seed: 2
+n_envs: 4
+use_subproc: false
+
+encoder: resnet18
+encoder_kwargs:
+  trainable: true
+
+total_timesteps: 500000
+checkpoint_steps: [100000, 250000, 500000]
+
+dormant_ratio:
+  enabled: true
+  log_freq: 10000        # env steps between measurements
+  n_reference_obs: 512
+  reference_seed: 12345  # fixed across ALL runs on purpose -- do not tie to `seed`
+  batch_size: 64
+  taus: [0.0, 0.025, 0.1]
+
+# Trains on the lower half of MiniWorld's appearance-randomization ranges; evaluate on the
+# held-out upper half with `python -m src.eval_generalization <this config> --checkpoint-step N`.
+generalization:
+  enabled: true
+
+learning_rate: 0.0003
+n_steps: 256          # per-env rollout length before each PPO update
+batch_size: 256
+n_epochs: 10
+gamma: 0.99
