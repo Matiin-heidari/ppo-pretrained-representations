@@ -151,7 +151,12 @@ class DormantRatioTracker:
 
 
 def collect_reference_observations(
-    env_id: str, n_obs: int, seed: int, use_subproc: bool = False
+    env_id: str,
+    n_obs: int,
+    seed: int,
+    use_subproc: bool = False,
+    domain_rand: bool = False,
+    params=None,
 ) -> np.ndarray:
     """Roll a random policy to build the fixed evaluation batch.
 
@@ -160,6 +165,12 @@ def collect_reference_observations(
 
     Observations are returned channel-first, matching what VecTransposeImage hands the policy
     during training, so the batch can be fed straight to `policy(obs)`.
+
+    Pass the training run's `domain_rand`/`params` so the batch comes from the same appearance
+    distribution the agent trains on -- otherwise the ratio describes encoder capacity on
+    renders the policy never sees. `seed` is what keeps the batch identical across runs; it is
+    deliberately not the run seed, so varying `domain_rand`/`params` does not make two runs of
+    the same configuration incomparable.
     """
     # Imported lazily so this module can be used (and unit-tested) without MiniWorld installed.
     from stable_baselines3.common.preprocessing import (
@@ -170,7 +181,14 @@ def collect_reference_observations(
 
     from src.envs.make_env import build_vec_env
 
-    env = build_vec_env(env_id, n_envs=1, seed=seed, use_subproc=use_subproc)
+    env = build_vec_env(
+        env_id,
+        n_envs=1,
+        seed=seed,
+        use_subproc=use_subproc,
+        domain_rand=domain_rand,
+        params=params,
+    )
     if is_image_space(env.observation_space) and not is_image_space_channels_first(
         env.observation_space
     ):

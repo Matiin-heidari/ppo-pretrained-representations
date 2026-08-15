@@ -93,8 +93,20 @@ def train(cfg: dict):
     os.makedirs(checkpoint_dir, exist_ok=True)
     os.makedirs(tensorboard_dir, exist_ok=True)
 
+    # Trains on the lower half of MiniWorld's appearance-randomization ranges (see
+    # src/envs/generalization.py); src/eval_generalization.py checks the held-out upper half
+    # for H3. Without this, training sees a single fixed appearance and there is nothing to
+    # generalize *from*.
+    generalization_enabled = cfg.get("generalization", {}).get("enabled", True)
+
     # Collected before the training env exists so only one MiniWorld GL context is alive at a
     # time -- MiniWorld's renderer is the fragile part of this pipeline.
+    #
+    # The reference batch is drawn from the same appearance distribution the agent trains on.
+    # MiniWorld's un-randomized defaults sit partly outside the training half (sky_color and
+    # light_color in particular), so collecting without domain randomization would measure
+    # encoder capacity on renders the policy never actually sees. `reference_seed` stays fixed
+    # and independent of `seed`, so the batch is still byte-identical across every run.
     dormant_cfg = cfg.get("dormant_ratio") or {}
     dormant_enabled = dormant_cfg.get("enabled", True)
     reference_obs = None
@@ -103,13 +115,10 @@ def train(cfg: dict):
             env_id=cfg["env_id"],
             n_obs=dormant_cfg.get("n_reference_obs", 512),
             seed=dormant_cfg.get("reference_seed", DEFAULT_REFERENCE_SEED),
+            domain_rand=generalization_enabled,
+            params=TRAIN_PARAMS if generalization_enabled else None,
         )
 
-    # Trains on the lower half of MiniWorld's appearance-randomization ranges (see
-    # src/envs/generalization.py); src/eval_generalization.py checks the held-out upper half
-    # for H3. Without this, training sees a single fixed appearance and there is nothing to
-    # generalize *from*.
-    generalization_enabled = cfg.get("generalization", {}).get("enabled", True)
     env = build_vec_env(
         env_id=cfg["env_id"],
         n_envs=cfg["n_envs"],
