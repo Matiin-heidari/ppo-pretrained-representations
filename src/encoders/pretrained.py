@@ -14,6 +14,28 @@ the initial policy near-uniform) and what correctly initializes the from-scratch
 Instead each pretrained extractor snapshots its backbone at construction and puts it back once
 the policy exists -- see `restore_pretrained_weights` in `src/encoders/__init__.py`.
 """
+import torch as th
+
+
+class ScaledLRAdam(th.optim.Adam):
+    """Adam with a per-parameter-group learning-rate multiplier applied inside `step()`.
+
+    The obvious way to fine-tune a backbone more slowly than the heads -- build Adam with two
+    param groups at different `lr` -- does not work under SB3. Before every update it calls
+    `_update_learning_rate`, which writes the single scheduled learning rate into *every*
+    param group, so the per-group values are silently discarded and the run trains as if
+    nothing had been configured. Applying the multiplier at step time survives that.
+    """
+
+    def step(self, closure=None):
+        originals = [group["lr"] for group in self.param_groups]
+        for group in self.param_groups:
+            group["lr"] = group["lr"] * group.get("lr_scale", 1.0)
+        try:
+            return super().step(closure)
+        finally:
+            for group, lr in zip(self.param_groups, originals):
+                group["lr"] = lr
 
 
 class PretrainedBackboneMixin:

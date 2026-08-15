@@ -11,7 +11,11 @@ from src.dormant_ratio import (
     DormantRatioCallback,
     collect_reference_observations,
 )
-from src.encoders import ENCODER_REGISTRY, restore_pretrained_weights
+from src.encoders import (
+    ENCODER_REGISTRY,
+    apply_backbone_lr_scale,
+    restore_pretrained_weights,
+)
 from src.envs.generalization import TRAIN_PARAMS
 from src.envs.make_env import build_vec_env
 
@@ -21,6 +25,10 @@ RESULTS_DIR = "results"
 # every encoder and every seed is measured on the identical observations, which is what makes
 # the ratios comparable across runs. Don't tie this to cfg["seed"].
 DEFAULT_REFERENCE_SEED = 12345
+
+# Trainable pretrained backbones fine-tune at 0.1x the head learning rate; see
+# apply_backbone_lr_scale in src/encoders/__init__.py for the measurements behind this.
+DEFAULT_BACKBONE_LR_SCALE = 0.1
 
 
 class MilestoneCheckpointCallback(BaseCallback):
@@ -160,6 +168,18 @@ def train(cfg: dict):
     # from-scratch CNN correctly orthogonally initialized. See src/encoders/pretrained.py.
     n_restored = restore_pretrained_weights(model.policy)
     print(f"[encoder] {cfg['encoder']}: restored pretrained weights on {n_restored} extractor(s)")
+
+    # A trainable pretrained backbone fine-tunes at a fraction of the head learning rate;
+    # at the full rate PPO overwrites the pretrained features well inside the interaction
+    # budget, which would collapse the fine-tune ablation into a from-scratch run. No-op for
+    # frozen encoders and for the CNN baseline. See src/encoders/pretrained.py for why this
+    # needs a custom optimizer rather than plain param groups.
+    backbone_lr_scale = cfg.get("backbone_lr_scale", DEFAULT_BACKBONE_LR_SCALE)
+    if apply_backbone_lr_scale(model.policy, cfg["learning_rate"], backbone_lr_scale):
+        print(
+            f"[encoder] backbone lr scaled by {backbone_lr_scale} "
+            f"({cfg['learning_rate'] * backbone_lr_scale:g} vs {cfg['learning_rate']:g} for heads)"
+        )
 
     callbacks = [MilestoneCheckpointCallback(cfg["checkpoint_steps"], checkpoint_dir, verbose=1)]
     if dormant_enabled:
