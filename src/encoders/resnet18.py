@@ -4,12 +4,14 @@ import torch.nn.functional as F
 import torchvision.models as tv_models
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 
+from src.encoders.pretrained import PretrainedBackboneMixin
+
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD = [0.229, 0.224, 0.225]
 RESNET18_EMBED_DIM = 512
 
 
-class ResNet18FeaturesExtractor(BaseFeaturesExtractor):
+class ResNet18FeaturesExtractor(PretrainedBackboneMixin, BaseFeaturesExtractor):
     """ImageNet-pretrained ResNet18. Frozen by default (Tier 1 core comparison); set
     trainable=True for the frozen-vs-fine-tuned ablation (plan §4.3, promoted from optional
     to core per supervisor feedback). Output is the pooled 512-d feature (fc replaced with
@@ -30,6 +32,8 @@ class ResNet18FeaturesExtractor(BaseFeaturesExtractor):
             for p in self.backbone.parameters():
                 p.requires_grad_(False)
             self.backbone.eval()
+
+        self._snapshot_pretrained()
 
     def train(self, mode: bool = True):
         super().train(mode)

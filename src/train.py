@@ -11,7 +11,7 @@ from src.dormant_ratio import (
     DormantRatioCallback,
     collect_reference_observations,
 )
-from src.encoders import ENCODER_REGISTRY
+from src.encoders import ENCODER_REGISTRY, restore_pretrained_weights
 from src.envs.generalization import TRAIN_PARAMS
 from src.envs.make_env import build_vec_env
 
@@ -143,6 +143,14 @@ def train(cfg: dict):
         seed=cfg["seed"],
         verbose=1,
     )
+
+    # SB3 builds the policy with ortho_init=True, which orthogonally re-initializes every
+    # Conv2d/Linear inside the features extractor -- overwriting the pretrained ResNet18/DINOv2
+    # weights that the extractor's __init__ just loaded. Putting them back here (rather than
+    # setting ortho_init=False) keeps the PPO heads on their standard init and leaves the
+    # from-scratch CNN correctly orthogonally initialized. See src/encoders/pretrained.py.
+    n_restored = restore_pretrained_weights(model.policy)
+    print(f"[encoder] {cfg['encoder']}: restored pretrained weights on {n_restored} extractor(s)")
 
     callbacks = [MilestoneCheckpointCallback(cfg["checkpoint_steps"], checkpoint_dir, verbose=1)]
     if dormant_enabled:

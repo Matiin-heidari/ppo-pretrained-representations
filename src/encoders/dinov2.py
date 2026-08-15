@@ -2,12 +2,14 @@ import torch as th
 import torch.nn.functional as F
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 
+from src.encoders.pretrained import PretrainedBackboneMixin
+
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD = [0.229, 0.224, 0.225]
 DINOV2_EMBED_DIM = 384  # dinov2_vits14, smallest variant (compute feasibility, plan §4.2)
 
 
-class DINOv2FeaturesExtractor(BaseFeaturesExtractor):
+class DINOv2FeaturesExtractor(PretrainedBackboneMixin, BaseFeaturesExtractor):
     """DINOv2 ViT-S/14, frozen by default (Tier 1); trainable=True is the Tier-2 stretch
     fine-tune ablation. Uses the [CLS] token as the pooled feature (plan §4.2 answers
     supervisor feedback point 5 on how ViT features feed the PPO heads).
@@ -25,6 +27,8 @@ class DINOv2FeaturesExtractor(BaseFeaturesExtractor):
             for p in self.backbone.parameters():
                 p.requires_grad_(False)
             self.backbone.eval()
+
+        self._snapshot_pretrained()
 
     def train(self, mode: bool = True):
         super().train(mode)
