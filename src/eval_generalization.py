@@ -13,7 +13,9 @@ import numpy as np
 from stable_baselines3 import PPO
 from stable_baselines3.common.evaluation import evaluate_policy
 from stable_baselines3.common.preprocessing import is_image_space, is_image_space_channels_first
+from stable_baselines3.common.save_util import load_from_zip_file
 from stable_baselines3.common.vec_env import VecTransposeImage
+from stable_baselines3.common.vec_env.patch_gym import _convert_space
 
 from src.envs.generalization import SPLIT_PARAMS
 from src.envs.make_env import build_vec_env
@@ -40,6 +42,28 @@ def _mean_ci95(values: np.ndarray) -> dict:
     return {"mean": mean, "sem": sem, "ci95": 1.96 * sem, "n": n}
 
 
+def _load_policy_only(checkpoint_path: str, device: str = "auto") -> PPO:
+    """Load a checkpoint for inference, ignoring the saved optimizer state.
+
+    `PPO.load` restores `policy.optimizer` too and requires its structure to match the one the
+    freshly built policy happens to have. Fine-tune runs give the backbone its own param group
+    (see `apply_backbone_lr_scale`), so those checkpoints carry a two-group optimizer and a
+    plain `PPO.load` raises "loaded state dict has a different number of parameter groups".
+    Evaluation only ever needs the weights, so drop the optimizer entry and load the rest --
+    which also keeps old checkpoints readable if the optimizer layout changes again.
+    """
+    data, params, _pytorch_variables = load_from_zip_file(checkpoint_path, device=device)
+    for key in ("observation_space", "action_space"):
+        data[key] = _convert_space(data[key])
+
+    model = PPO(policy=data["policy_class"], env=None, device=device, _init_setup_model=False)
+    model.__dict__.update(data)
+    model._setup_model()
+    model.set_parameters({"policy": params["policy"]}, exact_match=False, device=device)
+    model.policy.set_training_mode(False)
+    return model
+
+
 def evaluate_checkpoint(
     checkpoint_path: str,
     env_id: str,
@@ -47,7 +71,7 @@ def evaluate_checkpoint(
     seed: int = DEFAULT_EVAL_SEED,
     deterministic: bool = True,
 ) -> dict:
-    model = PPO.load(checkpoint_path)
+    model = _load_policy_only(checkpoint_path)
 
     results = {}
     for split in ("train", "test"):
