@@ -1,16 +1,17 @@
 """Aggregate results across all real (non-smoke) runs into report-ready tables and figures.
 
 Reads whatever is currently under experiment_results/ (tensorboard reward curves,
-dormant-ratio JSONL, generalization-eval JSON) and produces, per encoder, mean +/- 95% CI
-across seeds:
+dormant-ratio JSONL, generalization-eval JSON) and produces, per (task, encoder), mean +/-
+95% CI across seeds:
   - a learning-curve plot (reward vs. env steps)          -> H1/H2
   - a reward-at-budget table (100k/250k/500k)              -> H2
   - a generalization-gap table (train vs. held-out test)   -> H3
   - a dormant-ratio-vs-steps plot (encoder units, tau=0.025) -> diagnostic
 
-Missing pieces (e.g. a generalization eval that hasn't been run on some machine yet) are
-skipped with a note printed to stdout rather than failing the whole aggregation -- run this
-again after more data lands to fill the gaps in.
+One set of outputs per task (e.g. oneroom, fourrooms) -- tasks are never averaged together.
+Missing pieces (e.g. a generalization eval that hasn't been run on some machine yet, or an
+encoder that was only run on one task) are skipped with a note printed to stdout rather than
+failing the whole aggregation -- run this again after more data lands to fill the gaps in.
 
 Usage: python -m analysis.aggregate
 """
@@ -28,11 +29,13 @@ OUT_DIR = "analysis/aggregated"
 BUDGETS = [100_000, 250_000, 500_000]
 PRIMARY_TAU = "0.025"
 
-RUN_NAME_RE = re.compile(r"^(?P<encoder>.+)_oneroom_seed(?P<seed>\d+)$")
 TB_DIR_RE = re.compile(r"^(?P<run_name>.+)_\d+$")
+TASK_SEED_RE = re.compile(r"^(?P<task>.+)_seed(?P<seed>\d+)$")
 
 # Fixed categorical order (dataviz skill palette, light-mode slots 1-4) -- never reassigned
-# per-plot, so an encoder keeps its color across every figure in the report.
+# per-plot, so an encoder keeps its color across every figure in the report, task included.
+# Matched against run_name by prefix (longest-first isn't needed: names are prefix-disjoint),
+# not a generic regex split, since both encoder and task segments can contain underscores.
 ENCODER_ORDER = ["cnn_scratch", "resnet18_frozen", "resnet18_finetune", "dinov2_frozen"]
 ENCODER_LABEL = {
     "cnn_scratch": "CNN (scratch)",
@@ -46,10 +49,24 @@ ENCODER_COLOR = {
     "resnet18_finetune": "#1baf7a",
     "dinov2_frozen": "#eda100",
 }
+TASK_LABEL = {
+    "oneroom": "MiniWorld-OneRoom",
+    "fourrooms": "MiniWorld-FourRooms",
+}
 INK = "#0b0b0b"
 INK_MUTED = "#898781"
 GRIDLINE = "#e1e0d9"
 SURFACE = "#fcfcfb"
+
+
+def encoder_task_seed(run_name):
+    for encoder in ENCODER_ORDER:
+        prefix = encoder + "_"
+        if run_name.startswith(prefix):
+            m = TASK_SEED_RE.match(run_name[len(prefix):])
+            if m:
+                return encoder, m.group("task"), int(m.group("seed"))
+    return None, None, None
 
 
 def discover_runs():
@@ -66,11 +83,6 @@ def discover_runs():
         if glob.glob(os.path.join(path, "events.out.tfevents.*")):
             runs[run_name] = path
     return runs
-
-
-def encoder_and_seed(run_name):
-    m = RUN_NAME_RE.match(run_name)
-    return (m.group("encoder"), int(m.group("seed"))) if m else (None, None)
 
 
 def load_reward_curve(tb_dir):
@@ -90,27 +102,28 @@ def mean_ci95(values):
     return mean, 1.96 * sem
 
 
-def group_by_encoder(runs):
+def group_runs(runs):
+    """task -> encoder -> seed -> (run_name, tb_dir). Tasks are kept fully separate."""
     grouped = {}
     for run_name, tb_dir in runs.items():
-        encoder, seed = encoder_and_seed(run_name)
+        encoder, task, seed = encoder_task_seed(run_name)
         if encoder is None:
             print(f"[skip] unrecognized run_name format: {run_name}")
             continue
-        grouped.setdefault(encoder, {})[seed] = (run_name, tb_dir)
+        grouped.setdefault(task, {}).setdefault(encoder, {})[seed] = (run_name, tb_dir)
     return grouped
 
 
 # -- learning curves ----------------------------------------------------------------------
 
 
-def plot_learning_curves(grouped, out_path):
+def plot_learning_curves(task, by_encoder, out_path):
     fig, ax = plt.subplots(figsize=(8, 5), facecolor=SURFACE)
     ax.set_facecolor(SURFACE)
 
     any_series = False
     for encoder in ENCODER_ORDER:
-        seeds = grouped.get(encoder)
+        seeds = by_encoder.get(encoder)
         if not seeds:
             continue
         curves = [load_reward_curve(tb_dir) for _run, tb_dir in seeds.values()]
@@ -128,13 +141,13 @@ def plot_learning_curves(grouped, out_path):
         any_series = True
 
     if not any_series:
-        print("[learning curves] no runs found, skipping plot")
+        print(f"[learning curves][{task}] no runs found, skipping plot")
         plt.close(fig)
         return
 
     ax.set_xlabel("Environment steps", color=INK)
     ax.set_ylabel("Episodic return (rollout/ep_rew_mean)", color=INK)
-    ax.set_title("Sample efficiency: reward vs. interaction budget", color=INK)
+    ax.set_title(f"Sample efficiency on {TASK_LABEL.get(task, task)}", color=INK)
     ax.grid(True, color=GRIDLINE, linewidth=1, zorder=0)
     ax.set_axisbelow(True)
     for spine in ax.spines.values():
@@ -144,16 +157,16 @@ def plot_learning_curves(grouped, out_path):
     fig.tight_layout()
     fig.savefig(out_path, dpi=150)
     plt.close(fig)
-    print(f"[learning curves] saved {out_path}")
+    print(f"[learning curves][{task}] saved {out_path}")
 
 
 # -- reward at fixed budgets (H2) ----------------------------------------------------------
 
 
-def budget_table(grouped):
+def budget_table(by_encoder):
     rows = []
     for encoder in ENCODER_ORDER:
-        seeds = grouped.get(encoder)
+        seeds = by_encoder.get(encoder)
         if not seeds:
             continue
         curves = [load_reward_curve(tb_dir) for _run, tb_dir in seeds.values()]
@@ -171,23 +184,25 @@ def budget_table(grouped):
 # -- generalization gap (H3) ---------------------------------------------------------------
 
 
-def generalization_table(grouped):
+def generalization_table(task, by_encoder):
     gen_dir = os.path.join(RESULTS_DIR, "generalization")
     files = glob.glob(os.path.join(gen_dir, "*.json"))
-    by_encoder = {}
+    by_encoder_gen = {}
     for path in files:
         with open(path) as f:
             data = json.load(f)
-        encoder, _seed = encoder_and_seed(data["run_name"])
-        if encoder is None:
+        encoder, run_task, _seed = encoder_task_seed(data["run_name"])
+        if encoder is None or run_task != task:
             continue
-        by_encoder.setdefault(encoder, []).append(data)
+        by_encoder_gen.setdefault(encoder, []).append(data)
 
     rows = []
     for encoder in ENCODER_ORDER:
-        entries = by_encoder.get(encoder)
+        if encoder not in by_encoder:
+            continue
+        entries = by_encoder_gen.get(encoder)
         if not entries:
-            print(f"[generalization] no eval data yet for {encoder} -- skipping")
+            print(f"[generalization][{task}] no eval data yet for {encoder} -- skipping")
             continue
         train_mean, train_ci = mean_ci95([e["train"]["mean"] for e in entries])
         test_mean, test_ci = mean_ci95([e["test"]["mean"] for e in entries])
@@ -210,13 +225,19 @@ def generalization_table(grouped):
 # -- dormant ratio (diagnostic) -------------------------------------------------------------
 
 
-def plot_dormant_ratio(out_path):
+def plot_dormant_ratio(task, by_encoder, out_path):
     fig, ax = plt.subplots(figsize=(8, 5), facecolor=SURFACE)
     ax.set_facecolor(SURFACE)
 
     any_series = False
     for encoder in ENCODER_ORDER:
-        paths = sorted(glob.glob(os.path.join(RESULTS_DIR, "dormant", f"{encoder}_oneroom_seed*.jsonl")))
+        seeds = by_encoder.get(encoder)
+        if not seeds:
+            continue
+        paths = [
+            os.path.join(RESULTS_DIR, "dormant", f"{run_name}.jsonl") for run_name, _tb in seeds.values()
+        ]
+        paths = [p for p in paths if os.path.exists(p)]
         if not paths:
             continue
         per_seed = []
@@ -240,13 +261,13 @@ def plot_dormant_ratio(out_path):
         any_series = True
 
     if not any_series:
-        print("[dormant ratio] no data found, skipping plot")
+        print(f"[dormant ratio][{task}] no data found, skipping plot")
         plt.close(fig)
         return
 
     ax.set_xlabel("Environment steps", color=INK)
     ax.set_ylabel(f"Encoder dormant ratio (tau={PRIMARY_TAU})", color=INK)
-    ax.set_title("Dormant-neuron ratio over training", color=INK)
+    ax.set_title(f"Dormant-neuron ratio over training on {TASK_LABEL.get(task, task)}", color=INK)
     ax.grid(True, color=GRIDLINE, linewidth=1, zorder=0)
     ax.set_axisbelow(True)
     for spine in ax.spines.values():
@@ -256,7 +277,7 @@ def plot_dormant_ratio(out_path):
     fig.tight_layout()
     fig.savefig(out_path, dpi=150)
     plt.close(fig)
-    print(f"[dormant ratio] saved {out_path}")
+    print(f"[dormant ratio][{task}] saved {out_path}")
 
 
 # -- CSV writer (no pandas dependency) ------------------------------------------------------
@@ -278,15 +299,22 @@ def main():
     os.makedirs(OUT_DIR, exist_ok=True)
     runs = discover_runs()
     print(f"Discovered {len(runs)} real runs: {sorted(runs)}")
-    grouped = group_by_encoder(runs)
-    for encoder in ENCODER_ORDER:
-        n = len(grouped.get(encoder, {}))
-        print(f"  {encoder}: {n} seed(s)" + ("" if n == 3 else "  <- expected 3"))
+    grouped = group_runs(runs)
 
-    plot_learning_curves(grouped, os.path.join(OUT_DIR, "learning_curves.png"))
-    write_csv(budget_table(grouped), os.path.join(OUT_DIR, "reward_at_budget.csv"))
-    write_csv(generalization_table(grouped), os.path.join(OUT_DIR, "generalization_gap.csv"))
-    plot_dormant_ratio(os.path.join(OUT_DIR, "dormant_ratio.png"))
+    for task, by_encoder in sorted(grouped.items()):
+        print(f"=== task: {task} ===")
+        for encoder in ENCODER_ORDER:
+            n = len(by_encoder.get(encoder, {}))
+            if n:
+                print(f"  {encoder}: {n} seed(s)" + ("" if n == 3 else "  <- expected 3"))
+
+        plot_learning_curves(task, by_encoder, os.path.join(OUT_DIR, f"learning_curves_{task}.png"))
+        write_csv(budget_table(by_encoder), os.path.join(OUT_DIR, f"reward_at_budget_{task}.csv"))
+        write_csv(
+            generalization_table(task, by_encoder),
+            os.path.join(OUT_DIR, f"generalization_gap_{task}.csv"),
+        )
+        plot_dormant_ratio(task, by_encoder, os.path.join(OUT_DIR, f"dormant_ratio_{task}.png"))
 
 
 if __name__ == "__main__":
