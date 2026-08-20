@@ -1,4 +1,4 @@
-run_name: dinov2_frozen_fourroom_seed1
+run_name: dinov2_frozen_fourrooms_seed1
 
 env_id: MiniWorld-FourRooms-v0
 seed: 1
