@@ -24,6 +24,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
 
+from src.stats import mean_ci95, t_crit_95
+
 RESULTS_DIR = "experiment_results"
 OUT_DIR = "analysis/aggregated"
 BUDGETS = [100_000, 250_000, 500_000]
@@ -94,14 +96,6 @@ def load_reward_curve(tb_dir):
     return steps, values
 
 
-def mean_ci95(values):
-    values = np.asarray(values, dtype=float)
-    n = len(values)
-    mean = float(values.mean())
-    sem = float(values.std(ddof=1) / np.sqrt(n)) if n > 1 else 0.0
-    return mean, 1.96 * sem
-
-
 def group_runs(runs):
     """task -> encoder -> seed -> (run_name, tb_dir). Tasks are kept fully separate."""
     grouped = {}
@@ -133,7 +127,7 @@ def plot_learning_curves(task, by_encoder, out_path):
         common_steps = min((s for s, _v in curves), key=len)
         interped = np.stack([np.interp(common_steps, s, v) for s, v in curves])
         mean = interped.mean(axis=0)
-        ci95 = 1.96 * interped.std(axis=0, ddof=1) / np.sqrt(len(curves))
+        ci95 = t_crit_95(len(curves)) * interped.std(axis=0, ddof=1) / np.sqrt(len(curves))
 
         color = ENCODER_COLOR[encoder]
         ax.plot(common_steps, mean, color=color, linewidth=2, label=ENCODER_LABEL[encoder])
@@ -253,7 +247,11 @@ def plot_dormant_ratio(task, by_encoder, out_path):
         common_steps = min((s for s, _r in per_seed), key=len)
         interped = np.stack([np.interp(common_steps, s, r) for s, r in per_seed])
         mean = interped.mean(axis=0)
-        ci95 = 1.96 * interped.std(axis=0, ddof=1) / np.sqrt(len(per_seed)) if len(per_seed) > 1 else np.zeros_like(mean)
+        ci95 = (
+            t_crit_95(len(per_seed)) * interped.std(axis=0, ddof=1) / np.sqrt(len(per_seed))
+            if len(per_seed) > 1
+            else np.zeros_like(mean)
+        )
 
         color = ENCODER_COLOR[encoder]
         ax.plot(common_steps, mean, color=color, linewidth=2, label=ENCODER_LABEL[encoder])

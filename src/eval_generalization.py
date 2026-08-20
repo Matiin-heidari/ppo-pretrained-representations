@@ -19,6 +19,7 @@ from stable_baselines3.common.vec_env.patch_gym import _convert_space
 
 from src.envs.generalization import SPLIT_PARAMS
 from src.envs.make_env import build_vec_env
+from src.stats import t_crit_95
 from src.train import RESULTS_DIR, load_config
 
 # Fixed independently of any run's training seed, and shared across every checkpoint we ever
@@ -39,7 +40,7 @@ def _mean_ci95(values: np.ndarray) -> dict:
     n = len(values)
     mean = float(values.mean())
     sem = float(values.std(ddof=1) / np.sqrt(n)) if n > 1 else 0.0
-    return {"mean": mean, "sem": sem, "ci95": 1.96 * sem, "n": n}
+    return {"mean": mean, "sem": sem, "ci95": t_crit_95(n) * sem, "n": n}
 
 
 def _load_policy_only(checkpoint_path: str, device: str = "auto") -> PPO:
