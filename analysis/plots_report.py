@@ -28,20 +28,21 @@ from src.stats import mean_ci95, t_crit_95
 
 OUT_DIR = "documents/figures"
 
-# Secondary encoding: colour alone must not carry series identity in a printed,
-# possibly greyscale figure. Fixed per encoder, like the colours.
-ENCODER_STYLE = {
-    "cnn_scratch": "-",
-    "resnet18_frozen": "--",
-    "resnet18_finetune": "-.",
-    "dinov2_frozen": ":",
-}
-
 Y_FLOOR = 5e-4  # log-axis floor for the dormancy plot
 
 # Return thresholds for the "steps to reach" columns, per task. OneRoom saturates near 0.95
 # while FourRooms tops out around 0.5, so one shared set is uninformative on one of them.
 THRESHOLDS = {"oneroom": (0.5, 0.8, 0.9), "fourrooms": (0.2, 0.3, 0.4)}
+
+# Upper limit of the return axis, per task. OneRoom uses the full range because it reaches it;
+# FourRooms tops out near 0.5, where a 0--1 axis would leave half the panel empty.
+Y_MAX = {"oneroom": 1.05, "fourrooms": 0.6}
+
+# A threshold counts as reached only once the curve holds it for this many further steps.
+# FourRooms returns oscillate by ~0.1, so a bare first crossing records a transient spike as
+# an attainment -- the CNN touches 0.4 once near 85k and then sits at 0.29 for the rest of
+# training. Requiring persistence also keeps the number readable off the figure.
+HOLD_STEPS = 50_000
 
 plt.rcParams.update({
     "font.family": "serif",
@@ -119,23 +120,20 @@ def fig_learning_curves(task, by_encoder, zoom_to=100_000, show_band=False):
         for ax, lim in ((ax_full, grid[-1]), (ax_zoom, zoom_to)):
             m = grid <= lim
             ax.plot(grid[m] / 1000, mean[m], color=ENCODER_COLOR[encoder],
-                    linestyle=ENCODER_STYLE[encoder], label=ENCODER_LABEL[encoder])
+                    label=ENCODER_LABEL[encoder])
             if show_band:
                 ax.fill_between(grid[m] / 1000, (mean - half)[m], (mean + half)[m],
                                 color=ENCODER_COLOR[encoder], alpha=0.15, linewidth=0)
     for ax, title in ((ax_full, "Full budget"), (ax_zoom, f"First {zoom_to//1000}k steps")):
-        # Return is bounded above by 1.0 (reach the goal instantly); a band drawn past that
-        # would imply attainable values that do not exist.
-        ax.set_ylim(-0.02, 1.05)
+        # Return is bounded above by 1.0 (reach the goal instantly); never draw past that.
+        ax.set_ylim(-0.02, Y_MAX[task])
         ax.set_xlabel("Environment steps (thousands)")
         ax.set_title(title, color=INK)
         _style_axes(ax)
     ax_full.set_ylabel("Episodic return")
-    # Keep the 0--1 scale on both tasks so the reader can see at a glance that FourRooms is
-    # nowhere near solved; that leaves the free corner in a different place per task.
-    top = max(line.get_ydata().max() for line in ax_zoom.get_lines())
-    ax_zoom.legend(frameon=False, labelcolor=INK,
-                   loc="upper left" if top < 0.6 else "lower right")
+    # "best" picks the least-overlapping corner from the data itself; a hand-tuned corner
+    # goes wrong as soon as the axis limits or the set of encoders changes.
+    ax_zoom.legend(frameon=False, labelcolor=INK, loc="best")
     fig.tight_layout(pad=0.4)
     _save(fig, f"learning_curves_{task}")
 
@@ -157,8 +155,7 @@ def fig_dormant(task, by_encoder):
                 ratios.append(rec["aggregate"]["encoder"][PRIMARY_TAU])
             per_seed.append((np.array(steps, float), np.array(ratios, float)))
         grid, mean, half = _band(per_seed)
-        ax.plot(grid / 1000, mean, color=ENCODER_COLOR[encoder],
-                linestyle=ENCODER_STYLE[encoder], label=ENCODER_LABEL[encoder])
+        ax.plot(grid / 1000, mean, color=ENCODER_COLOR[encoder], label=ENCODER_LABEL[encoder])
         ax.fill_between(grid / 1000, np.maximum(mean - half, Y_FLOOR), mean + half,
                         color=ENCODER_COLOR[encoder], alpha=0.15, linewidth=0)
     ax.set_yscale("log")
@@ -178,12 +175,18 @@ def _fmt_steps(x):
     return "---" if np.isnan(x) else f"{x/1000:.1f}k"
 
 
-def _steps_to(curves, threshold):
-    hits = []
-    for s, v in curves:
-        idx = int(np.argmax(v >= threshold))
-        hits.append(s[idx] if v[idx] >= threshold else np.nan)
-    return float(np.mean(hits))
+def _steps_to(curves, threshold, hold=HOLD_STEPS):
+    """First step at which the cross-seed mean curve reaches `threshold` and holds it for
+    `hold` further steps. Computed on the same mean curve the figures plot, so every entry in
+    the table can be checked against them. nan if that never happens."""
+    grid, mean, _half = _band(curves)
+    for i, step in enumerate(grid):
+        if mean[i] < threshold:
+            continue
+        window = mean[(grid >= step) & (grid <= step + hold)]
+        if len(window) and (window >= threshold).all():
+            return float(step)
+    return float("nan")
 
 
 def table_summary(task, by_encoder):
